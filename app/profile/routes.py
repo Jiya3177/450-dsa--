@@ -2,8 +2,10 @@ import base64
 import json
 
 import requests
-from flask import Blueprint, jsonify, render_template, request
+from flask import Blueprint, jsonify, render_template, request, send_file
 from flask_login import current_user, login_required
+import time
+from card_generator import generate_progress_card
 
 from app.extensions import db
 from app.platforms.fetchers import (
@@ -136,6 +138,40 @@ def edit_profile():
         db.user.update_one({"_id": current_user.id}, {"$set": update_fields})
         current_user.reload()
     return jsonify({"success": True})
+
+
+card_cache = {}
+CACHE_TTL = 3600
+
+@profile_bp.route("/u/<user_id>/card.png")
+def public_card(user_id):
+    from bson.objectid import ObjectId
+    try:
+        user = db.user.find_one({"_id": ObjectId(user_id)})
+    except:
+        return "Invalid User ID", 400
+        
+    if not user:
+        return "User not found", 404
+        
+    current_time = time.time()
+    if user_id in card_cache:
+        cached_time, cached_image = card_cache[user_id]
+        if current_time - cached_time < CACHE_TTL:
+            cached_image.seek(0)
+            return send_file(cached_image, mimetype="image/png")
+            
+    try:
+        from io import BytesIO
+        img = generate_progress_card(user)
+        img_io = BytesIO()
+        img.save(img_io, 'PNG')
+        img_io.seek(0)
+        
+        card_cache[user_id] = (current_time, img_io)
+        return send_file(img_io, mimetype="image/png")
+    except Exception as e:
+        return str(e), 500
 
 
 @profile_bp.route("/search_universities")
